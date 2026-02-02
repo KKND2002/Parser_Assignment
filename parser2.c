@@ -27,6 +27,7 @@ typedef struct {
 // Symbol table entry
 typedef struct {
     char name[50];
+    int value;
     int isDeclared;
 } Symbol;
 
@@ -49,12 +50,15 @@ void statement();
 void declaration();
 void assignment();
 void printStmt();
-void expression();
-void term();
+int expression();
+int term();
 void syntaxError(const char *message);
 void semanticError(const char *message);
 int isVariableDeclared(const char *varName);
 int addSymbol(const char *varName);
+int findSymbol(const char *varName);
+int getSymbolValue(const char *varName);
+void setSymbolValue(const char *varName, int value);
 void printSymbolTable();
 
 // Get next token from input
@@ -182,6 +186,37 @@ int isVariableDeclared(const char *varName) {
     return 0;
 }
 
+int findSymbol(const char *varName) {
+    for (int i = 0; i < symbolCount; i++) {
+        if (strcmp(symbolTable[i].name, varName) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int getSymbolValue(const char *varName) {
+    int idx = findSymbol(varName);
+    if (idx == -1 || !symbolTable[idx].isDeclared) {
+        char errorMsg[100];
+        sprintf(errorMsg, "Variable '%s' used before declaration", varName);
+        semanticError(errorMsg);
+        return 0;
+    }
+    return symbolTable[idx].value;
+}
+
+void setSymbolValue(const char *varName, int value) {
+    int idx = findSymbol(varName);
+    if (idx == -1 || !symbolTable[idx].isDeclared) {
+        char errorMsg[100];
+        sprintf(errorMsg, "Variable '%s' assigned before declaration", varName);
+        semanticError(errorMsg);
+        return;
+    }
+    symbolTable[idx].value = value;
+}
+
 // Add symbol to symbol table
 int addSymbol(const char *varName) {
     // Check for duplicate declaration
@@ -199,6 +234,7 @@ int addSymbol(const char *varName) {
     
     strcpy(symbolTable[symbolCount].name, varName);
     symbolTable[symbolCount].isDeclared = 1;
+    symbolTable[symbolCount].value = 0;
     symbolCount++;
     return 1;
 }
@@ -209,7 +245,7 @@ void printSymbolTable() {
         printf("(empty)\n");
     } else {
         for (int i = 0; i < symbolCount; i++) {
-            printf("  Variable: %s\n", symbolTable[i].name);
+            printf("  Variable: %s = %d\n", symbolTable[i].name, symbolTable[i].value);
         }
     }
     printf("====================\n");
@@ -262,12 +298,10 @@ void declaration() {
         syntaxError("Expected 'int' keyword");
         return;
     }
-    printf("  Found keyword: %s\n", currentToken.value);
     getNextToken();
     
     if (currentToken.type != TOKEN_IDENTIFIER) {
         syntaxError("Expected identifier after 'int'");
-        // Skip to semicolon for error recovery
         while (currentToken.type != TOKEN_SYMBOL_SEMICOLON && 
                currentToken.type != TOKEN_EOF) {
             getNextToken();
@@ -279,7 +313,6 @@ void declaration() {
     }
     
     strcpy(varName, currentToken.value);
-    printf("  Found identifier: %s\n", currentToken.value);
     getNextToken();
     
     // Add to symbol table (semantic check)
@@ -289,17 +322,15 @@ void declaration() {
         syntaxError("Expected '=' operator after identifier");
         return;
     }
-    printf("  Found operator: %s\n", currentToken.value);
     getNextToken();
     
-    expression();
+    int value = expression();
     
     if (currentToken.type != TOKEN_SYMBOL_SEMICOLON) {
         syntaxError("Expected ';' at end of declaration");
         return;
     }
-    printf("  Found symbol: %s\n", currentToken.value);
-    printf("Declaration parsed successfully!\n\n");
+    setSymbolValue(varName, value);
     getNextToken();
 }
 
@@ -314,7 +345,6 @@ void assignment() {
     }
     
     strcpy(varName, currentToken.value);
-    printf("  Found identifier: %s\n", currentToken.value);
     
     // Check if variable is declared (semantic check)
     if (!isVariableDeclared(varName)) {
@@ -329,17 +359,15 @@ void assignment() {
         syntaxError("Expected '=' operator");
         return;
     }
-    printf("  Found operator: %s\n", currentToken.value);
     getNextToken();
     
-    expression();
+    int value = expression();
     
     if (currentToken.type != TOKEN_SYMBOL_SEMICOLON) {
         syntaxError("Expected ';' at end of assignment");
         return;
     }
-    printf("  Found symbol: %s\n", currentToken.value);
-    printf("Assignment parsed successfully!\n\n");
+    setSymbolValue(varName, value);
     getNextToken();
 }
 
@@ -352,19 +380,16 @@ void printStmt() {
         syntaxError("Expected 'print' keyword");
         return;
     }
-    printf("  Found keyword: %s\n", currentToken.value);
     getNextToken();
     
     if (currentToken.type != TOKEN_SYMBOL_LPAREN) {
         syntaxError("Expected '(' after print");
         return;
     }
-    printf("  Found symbol: %s\n", currentToken.value);
     getNextToken();
     
     if (currentToken.type != TOKEN_IDENTIFIER) {
         syntaxError("Expected identifier inside print()");
-        // Skip to closing parenthesis for error recovery
         while (currentToken.type != TOKEN_SYMBOL_RPAREN && 
                currentToken.type != TOKEN_EOF) {
             getNextToken();
@@ -376,7 +401,6 @@ void printStmt() {
     }
     
     strcpy(varName, currentToken.value);
-    printf("  Found identifier: %s\n", currentToken.value);
     
     // Check if variable is declared (semantic check)
     if (!isVariableDeclared(varName)) {
@@ -385,56 +409,49 @@ void printStmt() {
         semanticError(errorMsg);
     }
     
+    int value = getSymbolValue(varName);
     getNextToken();
     
     if (currentToken.type != TOKEN_SYMBOL_RPAREN) {
         syntaxError("Expected ')' after identifier");
         return;
     }
-    printf("  Found symbol: %s\n", currentToken.value);
     getNextToken();
     
     if (currentToken.type != TOKEN_SYMBOL_SEMICOLON) {
         syntaxError("Expected ';' at end of print statement");
         return;
     }
-    printf("  Found symbol: %s\n", currentToken.value);
-    printf("Print statement parsed successfully!\n\n");
+    printf("Result: %d\n", value);
     getNextToken();
 }
 
 // CFG: expression -> term ('+' term)*
-void expression() {
-    printf("  Parsing expression...\n");
-    term();
+int expression() {
+    int left = term();
     
     while (currentToken.type == TOKEN_OPERATOR_PLUS) {
-        printf("    Found operator: %s\n", currentToken.value);
         getNextToken();
-        term();
+        int right = term();
+        left = left + right;
     }
+    return left;
 }
 
 // CFG: term -> IDENTIFIER | NUMBER
-void term() {
+int term() {
     if (currentToken.type == TOKEN_IDENTIFIER) {
-        printf("    Found identifier: %s\n", currentToken.value);
-        
-        // Check if variable is declared (semantic check)
-        if (!isVariableDeclared(currentToken.value)) {
-            char errorMsg[100];
-            sprintf(errorMsg, "Variable '%s' used in expression before declaration", 
-                    currentToken.value);
-            semanticError(errorMsg);
-        }
-        
+        int value = getSymbolValue(currentToken.value);
         getNextToken();
+        return value;
     } else if (currentToken.type == TOKEN_NUMBER) {
-        printf("    Found number: %s\n", currentToken.value);
+        int value = atoi(currentToken.value);
         getNextToken();
+        return value;
     } else {
         syntaxError("Expected identifier or number in expression");
-        getNextToken();  // Try to recover
+        getNextToken();
+        return 0;
     }
 }
 
@@ -453,5 +470,6 @@ int main(int argc, char *argv[]) {
     program();
     
     fclose(inputFile);
+
     return hasError ? 1 : 0;
 }
